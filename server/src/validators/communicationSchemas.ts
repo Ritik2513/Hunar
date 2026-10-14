@@ -27,8 +27,36 @@ export const providerCallbackSchema = z.object({
   errorMessage: z.string().max(1000).optional(),
 });
 
+export const bulkCommunicationSchema = z.object({
+  body: z
+    .object({
+      candidateIds: z
+        .array(z.string().regex(/^[a-f\d]{24}$/i, "Invalid candidate ID"))
+        .min(1)
+        .max(100)
+        .refine(
+          (ids) => new Set(ids).size === ids.length,
+          "Duplicate candidate IDs are not allowed",
+        ),
+      channel: z.enum(["email", "sms"]),
+      subject: z.string().trim().max(200).optional(),
+      body: z.string().trim().min(1).max(10000),
+    })
+    .strict(),
+});
+
+export const retryCommunicationSchema = z.object({
+  params: z.object({
+    id: z.string().regex(/^[a-f\d]{24}$/i, "Invalid communication ID"),
+  }),
+});
+
 export type SendCommunicationInput = z.infer<
   typeof sendCommunicationSchema
 >["body"];
 
 export type ProviderCallbackInput = z.infer<typeof providerCallbackSchema>;
+
+export type BulkCommunicationInput = z.infer<
+  typeof bulkCommunicationSchema
+>["body"];

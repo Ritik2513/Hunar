@@ -8,6 +8,7 @@ import { env } from "../config/communicationEnv.js";
 import type {
   ProviderCallbackInput,
   SendCommunicationInput,
+  BulkCommunicationInput,
 } from "../validators/communicationSchemas.js";
 
 interface ProviderResponse {
@@ -210,7 +211,160 @@ export async function processProviderCallback(
     if (!savedEvent.processedAt) {
       await ProviderEvent.deleteOne({ _id: savedEvent._id });
     }
-
     throw error;
+  }
+}
+
+export async function sendBulkCommunication(input: BulkCommunicationInput) {
+  const results = await Promise.all(
+    input.candidateIds.map(async (candidateId) => {
+      try {
+        const result = await sendCommunication({
+          candidateId,
+          channel: input.channel,
+          subject: input.subject,
+          body: input.body,
+        });
+
+        if ("providerError" in result) {
+          return {
+            candidateId,
+            success: false,
+            communication: result,
+            error: result.providerError,
+          };
+        }
+
+        return {
+          candidateId,
+          success: true,
+          communication: result,
+        };
+      } catch (error) {
+        return {
+          candidateId,
+          success: false,
+          error:
+            error instanceof Error
+              ? error.message
+              : "Unknown communication error",
+        };
+      }
+    }),
+  );
+
+  const succeeded = results.filter((result) => result.success).length;
+
+  return {
+    total: results.length,
+    succeeded,
+    failed: results.length - succeeded,
+    results,
+  };
+}
+
+const MAX_ATTEMPTS = 3;
+
+export async function retryCommunication(id: string) {
+  if (!mongoose.isValidObjectId(id)) {
+    throw new AppError(400, "Invalid communication ID");
+  }
+
+  const current = await Communication.findById(id);
+
+  if (!current) {
+    throw new AppError(404, "Communication not found");
+  }
+
+  if (current.status !== "failed") {
+    throw new AppError(409, "Only failed communications can be retried");
+  }
+
+  if (current.attempts.length >= MAX_ATTEMPTS) {
+    throw new AppError(409, `Maximum of ${MAX_ATTEMPTS} attempts reached`);
+  }
+
+  const attemptNumber = current.attempts.length + 1;
+
+  const communication = await Communication.findOneAndUpdate(
+    {
+      _id: current._id,
+      status: "failed",
+    },
+    {
+      $set: { status: "sending" },
+      $push: {
+        attempts: {
+          attemptNumber,
+          status: "started",
+          providerMessageId: null,
+          startedAt: new Date(),
+          completedAt: null,
+          errorMessage: null,
+        },
+      },
+    },
+    { new: true, runValidators: true },
+  );
+
+  if (!communication) {
+    throw new AppError(
+      409,
+      "Communication is already being processed or is no longer failed",
+    );
+  }
+
+  const attempt = communication.attempts.find(
+    (item) => item.attemptNumber === attemptNumber,
+  );
+
+  if (!attempt) {
+    throw new AppError(500, "Failed to initialize retry attempt");
+  }
+
+  try {
+    const response = await fetch(`${env.PROVIDER_URL}/api/provider/send`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        communicationId: communication._id.toString(),
+        attemptNumber,
+        channel: communication.channel,
+        recipient: communication.recipient,
+        subject: communication.subject,
+        body: communication.body,
+      }),
+      signal: AbortSignal.timeout(7000),
+    });
+
+    const result = (await response.json()) as ProviderResponse;
+
+    if (!response.ok || !result.success || !result.data?.providerMessageId) {
+      throw new Error(
+        result.message ?? `Provider returned HTTP ${response.status}`,
+      );
+    }
+
+    attempt.providerMessageId = result.data.providerMessageId;
+    attempt.status = "sent";
+    attempt.completedAt = new Date();
+    communication.status = "sent";
+
+    await communication.save();
+
+    return communication.toObject();
+  } catch (error) {
+    attempt.status = "failed";
+    attempt.completedAt = new Date();
+    attempt.errorMessage =
+      error instanceof Error ? error.message : "Unknown provider error";
+    communication.status = "failed";
+
+    await communication.save();
+
+    return {
+      ...communication.toObject(),
+      providerError: "The provider did not accept the retry",
+    };
   }
 }

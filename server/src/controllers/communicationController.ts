@@ -3,11 +3,15 @@ import {
   sendCommunicationSchema,
   candidateCommunicationHistorySchema,
   providerCallbackSchema,
+  bulkCommunicationSchema,
+  retryCommunicationSchema,
 } from "../validators/communicationSchemas.js";
 import {
   sendCommunication,
   listCandidateCommunications,
   processProviderCallback,
+  sendBulkCommunication,
+  retryCommunication,
 } from "../services/communicationService.js";
 
 export const sendCommunicationController: RequestHandler = async (
@@ -78,6 +82,57 @@ export const providerCallbackController: RequestHandler = async (
       message: result.duplicate
         ? "Duplicate provider event ignored"
         : "Provider event processed",
+      data: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const bulkCommunicationController: RequestHandler = async (
+  req,
+  res,
+  next,
+) => {
+  try {
+    const { body } = bulkCommunicationSchema.parse({
+      body: req.body,
+    });
+
+    const result = await sendBulkCommunication(body);
+
+    res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const retryCommunicationController: RequestHandler = async (
+  req,
+  res,
+  next,
+) => {
+  try {
+    const { params } = retryCommunicationSchema.parse({
+      params: req.params,
+    });
+
+    const result = await retryCommunication(params.id);
+
+    if ("providerError" in result) {
+      res.status(502).json({
+        success: false,
+        message: result.providerError,
+        data: result,
+      });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
       data: result,
     });
   } catch (error) {
