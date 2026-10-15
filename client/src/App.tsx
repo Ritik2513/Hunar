@@ -80,6 +80,17 @@ function App() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
+  const [historyCandidate, setHistoryCandidate] = useState<Candidate | null>(
+    null,
+  );
+
+  const [communicationHistory, setCommunicationHistory] = useState<
+    Communication[]
+  >([]);
+
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState("");
+
   const loadCandidates = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -305,6 +316,29 @@ function App() {
     }
   }
 
+  async function openCommunicationHistory(candidate: Candidate) {
+    setHistoryCandidate(candidate);
+    setCommunicationHistory([]);
+    setHistoryError("");
+    setHistoryLoading(true);
+
+    try {
+      const response = await apiRequest<Communication[]>(
+        `/communications/candidate/${candidate._id}`,
+      );
+
+      setCommunicationHistory(response.data);
+    } catch (error) {
+      setHistoryError(
+        error instanceof Error
+          ? error.message
+          : "Unable to load communication history.",
+      );
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
   return (
     <main className="min-h-screen bg-white text-[#292929]">
       <header className="flex flex-col gap-4 border-b border-[#e5e5e5] px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
@@ -481,10 +515,7 @@ function App() {
                     <td className="px-4">
                       <button
                         type="button"
-                        onClick={() => {
-                          setSelectedIds([candidate._id]);
-                          setDrawer("message");
-                        }}
+                        onClick={() => void openCommunicationHistory(candidate)}
                         className="text-left font-medium text-[#387de0] hover:underline"
                       >
                         {candidate.name}
@@ -741,6 +772,108 @@ function App() {
                 </div>
               </form>
             )}
+          </aside>
+        </div>
+      )}
+
+      {historyCandidate && (
+        <div className="fixed inset-0 z-50 flex justify-end">
+          {/* Backdrop */}
+          <button
+            type="button"
+            aria-label="Close communication history"
+            className="absolute inset-0 bg-black/30 backdrop-blur-sm"
+            onClick={() => setHistoryCandidate(null)}
+          />
+
+          {/* Drawer */}
+          <aside className="relative flex h-full w-full max-w-[730px] flex-col bg-white shadow-xl">
+            <header className="flex items-center justify-between border-b px-8 py-5">
+              <h2 className="text-xl font-semibold">Communication history</h2>
+
+              <button
+                type="button"
+                onClick={() => setHistoryCandidate(null)}
+                className="text-3xl leading-none text-gray-500 hover:text-gray-900"
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </header>
+
+            <div className="flex-1 overflow-y-auto px-8 py-6">
+              <p className="mb-2 text-sm text-gray-500">
+                Candidate ID: {historyCandidate._id}
+              </p>
+
+              <h3 className="text-2xl font-semibold">
+                {historyCandidate.name}
+              </h3>
+
+              <p className="mt-2 text-gray-700">{historyCandidate.phone}</p>
+
+              <p className="mt-2 text-gray-700">{historyCandidate.email}</p>
+
+              <div className="mt-8">
+                {historyLoading ? (
+                  <p className="py-12 text-center text-gray-500">
+                    Loading communication history...
+                  </p>
+                ) : historyError ? (
+                  <div className="rounded-lg bg-red-50 p-4 text-sm text-red-700">
+                    {historyError}
+                  </div>
+                ) : communicationHistory.length === 0 ? (
+                  <div className="flex min-h-64 flex-col items-center justify-center text-center">
+                    <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-gray-100">
+                      <span className="text-2xl text-gray-400">↗</span>
+                    </div>
+
+                    <h4 className="font-medium text-gray-900">
+                      No communication history
+                    </h4>
+
+                    <p className="mt-2 max-w-sm text-sm text-gray-500">
+                      No messages have been sent to this candidate yet.
+                    </p>
+                  </div>
+                ) : (
+                  communicationHistory.map((message) => (
+                    <article
+                      key={message._id}
+                      className="border-t border-gray-200 py-6"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <time className="text-sm text-gray-500">
+                          {new Date(message.createdAt).toLocaleDateString(
+                            "en-GB",
+                            {
+                              day: "2-digit",
+                              month: "2-digit",
+                              year: "numeric",
+                            },
+                          )}
+                          {" | "}
+                          {new Date(message.createdAt).toLocaleTimeString(
+                            "en-US",
+                            {
+                              hour: "numeric",
+                              minute: "2-digit",
+                            },
+                          )}
+                        </time>
+
+                        <StatusBadge status={message.status} />
+                      </div>
+
+                      <p className="mt-4 whitespace-pre-wrap break-words text-[15px] leading-6 text-gray-800">
+                        {message.body}
+                      </p>
+                    </article>
+                  ))
+                )}
+              </div>
+            </div>
           </aside>
         </div>
       )}
